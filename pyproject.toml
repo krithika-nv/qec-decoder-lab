@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qec-decoder-lab"
+version = "0.1.0"
+description = "Experimental QEC decoding project: Stim surface-code memories, MWPM baselines, Bayesian inference, and evidence audits"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "QEC Decoder Lab Contributors"}]
+dependencies = ["stim>=1.15,<2", "pymatching>=2.3,<3", "numpy>=1.26"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.9"]
+accelerated = ["numba>=0.60"]
+plots = ["matplotlib>=3.8"]
+quantum = ["pennylane>=0.40,<0.46"]
+
+[project.scripts]
+qec-lab = "qec_decoder_lab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100

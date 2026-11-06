@@ -1,0 +1,77 @@
+name: Paper benchmark - nine-distance measured PyMatching evidence
+on:
+  workflow_dispatch:
+    inputs:
+      distances:
+        description: 'Published distances (default is all nine). Subsets are partial only.'
+        required: true
+        default: '5 7 9 13 17 23 29 39 50'
+        type: string
+      shots:
+        description: 'Shots per distance (>=10000 is required for protocol matching)'
+        required: true
+        default: '10000'
+        type: string
+      repeats:
+        description: 'Repeated warm decode_batch timings (>=7 for full study)'
+        required: true
+        default: '7'
+        type: string
+      require_all_nine:
+        description: 'Reject partial distance coverage, reduced shots and reduced repetitions'
+        required: true
+        default: true
+        type: boolean
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned simulator and decoder
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev,plots]' 'stim==1.16.0' 'pymatching==2.4.0'
+      - name: Run measured timing and complete evidence audit
+        env:
+          PYTHON: python
+          DISTANCES: ${{ inputs.distances }}
+          SHOTS: ${{ inputs.shots }}
+          REPEATS: ${{ inputs.repeats }}
+          STRICT_ALL_NINE: ${{ inputs.require_all_nine && '1' || '0' }}
+          REDO_DECODE: '1'
+        run: bash scripts/shell/RUN_STAGE5_PAPER.sh
+      - name: Validate coverage and record complete installed versions
+        if: always()
+        env:
+          REQUIRE_ALL_NINE: ${{ inputs.require_all_nine && '1' || '0' }}
+        run: |
+          mkdir -p outputs/stage5_paper
+          python -m pip freeze > outputs/stage5_paper/python_dependencies.txt
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          path = Path('outputs/stage5_paper/audit_stage5.json')
+          if not path.exists():
+              raise SystemExit('Missing independent Stage 5 audit')
+          result = json.loads(path.read_text())
+          if result['status'] != 'PASS':
+              raise SystemExit('Stage 5 audit failed')
+          if os.environ.get('REQUIRE_ALL_NINE') == '1' and not result['all_nine_10000_shots_7_repeats']:
+              raise SystemExit('Full protocol requires nine distances, 10000 shots, 7 repeats')
+          print(f"Audited {result['distance_count']} measured distances")
+          PY
+      - name: Archive circuits, raw evidence, measurements, logs and audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-timing-${{ github.run_id }}
+          path: outputs/stage5_paper/
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,21 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+.venv/
+.DS_Store
+build/
+dist/
+outputs/*
+!outputs/.gitkeep
+
+# Local benchmark and evidence archives (not source-controlled)
+*.zip
+*.log
+*.npz
+*.npy
+*.prof
+*.pstats
+.coverage
+coverage.xml

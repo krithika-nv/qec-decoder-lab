@@ -1,0 +1,76 @@
+name: QEC hybrid performance validation (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'smoke (2 cases), focused (12), expanded (18)'
+        type: choice
+        required: true
+        default: smoke
+        options: [smoke, focused, expanded]
+      engine:
+        description: 'vectorized for broad compatibility; compiled requires Numba'
+        type: choice
+        required: true
+        default: vectorized
+        options: [vectorized, compiled]
+      mwpm_shots:
+        description: 'MWPM samples per case; full expanded recommendation: 25000'
+        required: true
+        default: '64'
+        type: string
+      paired_shots:
+        description: 'Common held-out shots; full expanded recommendation: 4096'
+        required: true
+        default: '16'
+        type: string
+      timing_shots:
+        description: 'Identical shots per timing worker; up to paired shots'
+        required: true
+        default: '8'
+        type: string
+permissions:
+  contents: read
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install core dependencies, tests, and optional JIT support
+        run: python -m pip install -e '.[dev,accelerated]'
+      - name: Run automated tests
+        run: python -m pytest -q
+      - name: Freeze new hybrid study, sample, audit
+        env:
+          PYTHON: python
+          MODE: ${{ inputs.profile }}
+          SHOTS: ${{ inputs.mwpm_shots }}
+          PAIRED_SHOTS: ${{ inputs.paired_shots }}
+          CHECK_UPDATE: ${{ inputs.engine }}
+          BASIS_UPDATE: python
+          HYBRID_GATE_FRACTION: '0.10'
+        run: bash scripts/shell/RUN_HYBRID_HELDOUT.sh
+      - name: Benchmark MWPM versus hybrid using separate workers
+        env:
+          PYTHON: python
+          TIMING_SHOTS: ${{ inputs.timing_shots }}
+          REPEATS: '5'
+        run: bash scripts/shell/RUN_HYBRID_PERFORMANCE.sh
+      - name: Audit and package frozen evidence
+        env:
+          PYTHON: python
+        run: bash scripts/shell/PACK_HYBRID_EVIDENCE.sh
+      - name: Publish evidence and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qec-hybrid-${{ inputs.profile }}-${{ inputs.engine }}
+          path: |
+            qec-hybrid-heldout-evidence.zip
+            outputs/hybrid_heldout/
+          retention-days: 14
+          if-no-files-found: warn

@@ -1,0 +1,119 @@
+name: CI - tests and numerical invariants
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: python -m pip install -e '.[dev,plots]'
+      - name: Run unit and integration tests
+        run: python -m pytest -q
+      - name: Smoke experiment
+        run: |
+          python -m qec_decoder_lab run --distance 3 --rounds 1 --p 0.01 --shots 200 --seed 42 --bayesian on --approximate on --output outputs/ci-smoke.json
+      - name: Smoke test syndrome-consistent decoder integration
+        run: RECOVERY=1 SHOTS=40 BP_SHOTS=8 PYTHON=python bash scripts/shell/RUN_STAGE4_COMPARISON.sh
+      - name: Upload reproducibility artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qec-smoke-py${{ matrix.python-version }}
+          path: |
+            outputs/ci-smoke.json
+            outputs/ci-smoke.npz
+            outputs/ci-smoke.stim
+            outputs/ci-smoke.dem
+            outputs/stage4_quick/
+          if-no-files-found: warn
+
+  pennylane-check:
+    name: PennyLane validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install independent quantum reference implementation
+        run: python -m pip install -e '.[dev,quantum]'
+      - name: Validate 2-qubit ZZ stabilizer measurement against Stim and analytic Pauli model
+        run: |
+          python -m pytest -q tests/test_pennylane_check.py
+          python -m qec_decoder_lab.pennylane_check --shots 3000
+      - name: Archive PennyLane validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qec-pennylane-check
+          path: outputs/pennylane/
+          if-no-files-found: warn
+
+
+  project-quality:
+    name: Shell, docs, source and package sanity
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check shell syntax and local documentation links
+        run: |
+          for script in scripts/shell/*.sh; do bash -n "$script"; done
+          python scripts/python/check_project_docs.py
+          python -m compileall -q src tests
+      - name: Verify editable project metadata and build distribution
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip wheel . --no-build-isolation --no-deps -w dist/wheels
+          ls -lh dist/wheels
+
+  heldout-integration-smoke:
+    name: Frozen decoder and exact oracle smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - name: Small exact logical-MAP oracle checks
+        run: PYTHON=python bash scripts/shell/RUN_EXACT_ORACLE.sh
+      - name: Fresh locked small-sample decoding experiment
+        run: MODE=smoke SHOTS=64 PAIRED_SHOTS=16 PYTHON=python REDO_MWPM=1 REDO_RECOVERY=1 REPLAY_SEED=1 bash scripts/shell/RUN_HELDOUT_VALIDATION.sh
+      - name: Isolated worker smoke benchmark
+        run: TIMING_SHOTS=8 REPEATS=3 PYTHON=python bash scripts/shell/RUN_PERFORMANCE.sh
+      - name: Package audited small study
+        run: PYTHON=python bash scripts/shell/PACK_VALIDATION_EVIDENCE.sh
+      - name: Archive smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qec-frozen-smoke
+          path: |
+            qec-heldout-validation-evidence.zip
+            outputs/heldout/
+            outputs/exact_oracle/
+          if-no-files-found: warn
+          retention-days: 14

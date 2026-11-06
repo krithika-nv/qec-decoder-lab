@@ -1,0 +1,70 @@
+name: Optimized decoder validation (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      study_profile:
+        description: "smoke (2 cases), focused (12), or expanded (18)"
+        required: true
+        default: smoke
+        type: choice
+        options: [smoke, focused, expanded]
+      mwpm_shots:
+        description: "MWPM shots per case; use 25000 for expanded study"
+        required: true
+        default: '64'
+        type: string
+      paired_shots:
+        description: "Common shots for both decoders; use 4096 for expanded study"
+        required: true
+        default: '16'
+        type: string
+      timing_shots:
+        description: "Common archived shots in each performance worker"
+        required: true
+        default: '8'
+        type: string
+permissions:
+  contents: read
+jobs:
+  expanded-decoder-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install core dependencies and tests
+        run: python -m pip install -e '.[dev]'
+      - name: Run numerical tests
+        run: python -m pytest -q
+      - name: Run independent post-optimization study
+        env:
+          MODE: ${{ inputs.study_profile }}
+          SHOTS: ${{ inputs.mwpm_shots }}
+          PAIRED_SHOTS: ${{ inputs.paired_shots }}
+          PYTHON: python
+        run: |
+          OUTPUT_DIR=outputs/optimized_heldout bash scripts/shell/RUN_OPTIMIZED_HELDOUT.sh
+      - name: Measure both decoders in separate processes
+        env:
+          PYTHON: python
+          TIMING_SHOTS: ${{ inputs.timing_shots }}
+          REPEATS: '5'
+        run: OUTPUT_DIR=outputs/optimized_heldout bash scripts/shell/RUN_PERFORMANCE.sh
+      - name: Audit and package complete evidence
+        env:
+          PYTHON: python
+        run: |
+          OUTPUT_DIR=outputs/optimized_heldout ZIP_PATH=qec-optimized-heldout-evidence.zip \
+          bash scripts/shell/PACK_VALIDATION_EVIDENCE.sh
+      - name: Upload execution logs and audited outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qec-optimized-validation-${{ inputs.study_profile }}
+          path: |
+            qec-optimized-heldout-evidence.zip
+            outputs/optimized_heldout/
+          retention-days: 14
+          if-no-files-found: warn

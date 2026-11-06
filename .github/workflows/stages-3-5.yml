@@ -1,0 +1,85 @@
+name: Stages 3-5 - verified experimental evidence
+on:
+  workflow_dispatch:
+    inputs:
+      full_study:
+        description: 'Full 72-case Stage 4 matrix and nine-distance Stage 5 measurement'
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  stage3:
+    name: Stage 3 - invariants and seeded bitwise replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev,plots,quantum]'
+      - name: Exact/approximate, PennyLane checks and seeded replay
+        run: SHOTS=400 PYTHON=python bash scripts/shell/RUN_STAGE3_VERIFY.sh
+      - name: Archive evidence even if a gate failed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage3-reproducibility
+          path: outputs/stage3/
+          if-no-files-found: warn
+  stage4:
+    name: Stage 4 - matched-shot decoder comparison
+    needs: [stage3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev,plots]'
+      - name: Full 72-case comparison, independently re-decoded
+        if: ${{ inputs.full_study }}
+        run: MODE=full SHOTS=2000 BP_SHOTS=256 PYTHON=python bash scripts/shell/RUN_STAGE4_COMPARISON.sh
+      - name: Small deterministic CI study (not scientific validation)
+        if: ${{ !inputs.full_study }}
+        run: |
+          mkdir -p outputs/stage4
+          PYTHONPATH=src python -m qec_decoder_lab.studies benchmark \
+            --distances 3 5 --ps 0.005 --bases x z \
+            --profiles circuit_level --shots 35 --bp-shots 16 --timing-shots 12 \
+            --bp-iterations 10 --timing-repeats 2 --replay --redo-mwpm \
+            --output-dir outputs/stage4
+      - name: Archive independent paired study and all shots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage4-paired-study
+          path: outputs/stage4/
+          if-no-files-found: warn
+  stage5:
+    name: Stage 5 - paper-matched measured decoding
+    needs: [stage3]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev,plots]'
+      - name: All nine paper distances (strict study)
+        if: ${{ inputs.full_study }}
+        run: SHOTS=10000 REPEATS=7 STRICT_ALL_NINE=1 REDO_DECODE=1 PYTHON=python bash scripts/shell/RUN_STAGE5_PAPER.sh
+      - name: Short integration smoke (partial, not paper reproduction)
+        if: ${{ !inputs.full_study }}
+        run: DISTANCES='5 7' SHOTS=100 REPEATS=2 REDO_DECODE=1 PYTHON=python bash scripts/shell/RUN_STAGE5_PAPER.sh
+      - name: Archive raw matched-protocol measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage5-paper-matching
+          path: outputs/stage5_paper/
+          if-no-files-found: warn
